@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Secure Web Voting System - PWA + Backend Ready</title>
+<link rel="manifest" href="manifest.json">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+:root{
+ --primary:#6366f1; --bg:#f4f7ff; --card:#ffffff; --text:#0f172a;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:'Segoe UI',system-ui;background:var(--bg);color:var(--text)}
+.container{max-width:1200px;margin:auto;padding:16px}
+.card{background:var(--card);border-radius:16px;padding:16px;box-shadow:0 10px 25px rgba(0,0,0,.06);margin-bottom:16px}
+button{padding:12px 18px;border:none;border-radius:12px;cursor:pointer;font-weight:600}
+.primary{background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff}
+.hidden{display:none}
+.nav{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+input,select{padding:12px;width:100%;margin:6px 0;border-radius:10px;border:1px solid #e2e8f0}
+.table{width:100%;border-collapse:collapse;font-size:14px}
+.table th,.table td{border-bottom:1px solid #e5e7eb;padding:10px;text-align:center}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+@keyframes fade{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.page{animation:fade .4s ease}
+@media(max-width:768px){.nav{flex-direction:column;align-items:flex-start}button{width:100%}}
+</style>
+</head>
+<body>
+<div class="container">
+
+<div id="login" class="card">
+<h2>Login Voting System</h2>
+<input id="username" placeholder="Username">
+<input id="password" type="password" placeholder="Password">
+<button class="primary" id="loginBtn">Login</button>
+</div>
+
+<div id="home" class="hidden page">
+<div class="nav"><h2>Home</h2><button id="logoutBtn1">Logout</button></div>
+<div class="card"><button class="primary" id="toVisi">Lihat Visi Misi Paslon</button></div>
+</div>
+
+<div id="visi" class="hidden page">
+<div class="nav"><h2>Visi Misi</h2><button id="backHome">Kembali</button></div>
+<div id="paslonList" class="grid"></div>
+<button class="primary" id="toVote">Lanjut Voting</button>
+</div>
+
+<div id="vote" class="hidden page">
+<div class="nav"><h2>Voting</h2><button id="logoutBtn2">Logout</button></div>
+<div id="voteList" class="grid"></div>
+</div>
+
+<div id="thanks" class="hidden page">
+<div class="card" style="text-align:center">
+<h2>Terima Kasih 🙏</h2>
+<p>Voting berhasil.</p>
+<button class="primary" id="logoutBtn3">Logout</button>
+</div>
+</div>
+
+<div id="rekapPage" class="hidden page">
+<div class="nav"><h2>Rekapitulasi</h2><div style="display:flex;gap:10px"><button id="exportPDF">Export PDF</button><button id="backAdmin">Kembali</button></div></div>
+<div class="card"><canvas id="chart"></canvas><table class="table" id="rekap"></table></div>
+</div>
+
+<div id="admin" class="hidden page">
+<div class="nav"><h2>Admin Dashboard</h2><button id="logoutBtn4">Logout</button></div>
+<div class="card">
+<h3>Tambah User</h3>
+<input id="newUser" placeholder="Username">
+<input id="newPass" placeholder="Password">
+<button id="addUserBtn">Tambah</button>
+<h3>Upload User CSV</h3>
+<input type="file" accept=".csv" id="csvFile">
+<h3>Tambah Paslon</h3>
+<input id="paslonName" placeholder="Nama Paslon">
+<input type="file" id="paslonImgFile" accept="image/png,image/jpeg">
+<button id="addPaslonBtn">Tambah Paslon</button>
+<h3>Daftar User</h3>
+<table class="table" id="userTable"></table>
+<button class="primary" id="toRekap">Lihat Rekapitulasi</button>
+</div>
+</div>
+
+</div>
+
+<script>
+// ===== DATABASE =====
+let users=[{u:'admin',p:'admin',role:'admin'},{u:'user1',p:'123',role:'user'}];
+let paslon=[];
+let votes={};
+let currentUser=null;
+let chartInstance=null;
+
+function show(id){
+ document.querySelectorAll('.container>div').forEach(d=>d.classList.add('hidden'));
+ document.getElementById(id).classList.remove('hidden');
+}
+
+function login(){
+ const u=username.value;
+ const p=password.value;
+ const user=users.find(x=>x.u===u && x.p===p);
+ if(!user) return alert('Login gagal');
+ currentUser=user;
+ localStorage.setItem('session',JSON.stringify({u:user.u,role:user.role,token:Date.now()}));
+ if(user.role==='admin') show('admin'); else show('home');
+ render();
+}
+
+function logout(){
+ currentUser=null;
+ localStorage.removeItem('session');
+ show('login');
+}
+
+function addUser(){
+ if(!newUser.value||!newPass.value) return;
+ users.push({u:newUser.value,p:newPass.value,role:'user'});
+ newUser.value='';newPass.value='';render();
+}
+
+function addPaslon(){
+ const n=paslonName.value; const f=paslonImgFile.files[0];
+ if(!n||!f) return alert('Lengkapi data');
+ const r=new FileReader();
+ r.onload=e=>{paslon.push({name:n,img:e.target.result});render();};
+ r.readAsDataURL(f);
+}
+
+function importCSV(file){
+ if(!file) return;
+ const r=new FileReader();
+ r.onload=e=>{
+  const lines=e.target.result.split(/\r?\n/);
+  lines.forEach((l,i)=>{
+    if(i===0) return;
+    const c=l.split(',');
+    if(c[0]&&c[1]) users.push({u:c[0],p:c[1],role:'user'});
+  });
+  render();
+ };
+ r.readAsText(file);
+}
+
+function vote(i){
+ if(votes[currentUser.u]) return alert('Sudah voting');
+ votes[currentUser.u]=i;
+ show('thanks');
+ render();
+}
+
+function editUser(i,f,v){users[i][f]=v}
+function deleteUser(i){users.splice(i,1);render()}
+
+// ===== EXPORT PDF (FRONTEND SIMULATION) =====
+function exportRekapPDF(){
+ let content='HASIL VOTING\n\n';
+ paslon.forEach((p,i)=>{
+  const c=Object.values(votes).filter(v=>v===i).length;
+  content+=p.name+' : '+c+' suara\n';
+ });
+ const blob=new Blob([content],{type:'application/pdf'});
+ const url=URL.createObjectURL(blob);
+ const a=document.createElement('a');
+ a.href=url;
+ a.download='hasil_voting.pdf';
+ a.click();
+ URL.revokeObjectURL(url);
+}
+
+function render(){
+ // 1 akun = 1 vote enforcement
+ Object.keys(votes).forEach(u=>{ if(!users.find(x=>x.u===u)) delete votes[u]; });
+ paslonList.innerHTML=paslon.map(p=>`<div class='card'><h4>${p.name}</h4><img src='${p.img}'></div>`).join('');
+ voteList.innerHTML=paslon.map((p,i)=>`<div class='card'><h4>${p.name}</h4><button class='primary' onclick='vote(${i})'>Pilih</button></div>`).join('');
+
+ let u='<tr><th>Username</th><th>Password</th><th>Role</th><th>Aksi</th></tr>';
+ users.forEach((x,i)=>{
+  u+=`<tr><td><input value='${x.u}' onchange="editUser(${i},'u',this.value)"></td><td><input value='${x.p}' onchange="editUser(${i},'p',this.value)"></td><td><select onchange="editUser(${i},'role',this.value)"><option value='admin' ${x.role==='admin'?'selected':''}>admin</option><option value='user' ${x.role==='user'?'selected':''}>user</option></select></td><td><button onclick='deleteUser(${i})'>Hapus</button></td></tr>`;
+ });
+ userTable.innerHTML=u;
+
+ let t='<tr><th>Paslon</th><th>Suara</th></tr>';
+ paslon.forEach((p,i)=>{const c=Object.values(votes).filter(v=>v===i).length;t+=`<tr><td>${p.name}</td><td>${c}</td></tr>`});
+ rekap.innerHTML=t;
+
+ const labels=paslon.map(p=>p.name);
+ const data=paslon.map((p,i)=>Object.values(votes).filter(v=>v===i).length);
+ const ctx=document.getElementById('chart');
+ if(ctx){if(chartInstance)chartInstance.destroy();chartInstance=new Chart(ctx,{type:'pie',data:{labels:labels,datasets:[{data:data}]}})}
+}
+
+// ===== SESSION AUTO LOGIN =====
+const sess=localStorage.getItem('session');
+if(sess){const s=JSON.parse(sess);const u=users.find(x=>x.u===s.u);if(u){currentUser=u;if(u.role==='admin')show('admin');else show('home')}}
+
+window.addEventListener('DOMContentLoaded',()=>{
+ exportPDF.onclick=exportRekapPDF;
+ loginBtn.onclick=login;
+ logoutBtn1.onclick=logout;
+ logoutBtn2.onclick=logout;
+ logoutBtn3.onclick=logout;
+ logoutBtn4.onclick=logout;
+ toVisi.onclick=()=>show('visi');
+ backHome.onclick=()=>show('home');
+ toVote.onclick=()=>show('vote');
+ addUserBtn.onclick=addUser;
+ addPaslonBtn.onclick=addPaslon;
+ toRekap.onclick=()=>show('rekapPage');
+ backAdmin.onclick=()=>show('admin');
+ csvFile.addEventListener('change',e=>importCSV(e.target.files[0]));
+ render();
+});
+</script>
+</body>
+</html>
